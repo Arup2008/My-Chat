@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="bn">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>MyChat Pro - Advanced Calling & Sync</title>
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<style>
+:root{ --wh-green:#075e54; --accent:#25d366; --bg:#ece5dd; --card:#fff; --red:#ff3b30; }
+*{box-sizing:border-box;font-family:Segoe UI,Roboto,Arial,sans-serif}
+body{margin:0;background:var(--bg);display:flex;justify-content:center;padding:10px;height:100vh;overflow:hidden}
+.app{width:100%;max-width:450px;background:var(--card);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 10px 30px rgba(0,0,0,0.2);position:relative}
+
+/* Custom Notification Toast */
+#toast-container{position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:9999;width:90%;max-width:350px}
+.toast{background:rgba(0,0,0,0.8);color:#fff;padding:12px 20px;border-radius:8px;margin-bottom:10px;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,0.2);display:none;animation:slideDown 0.3s ease}
+
+@keyframes slideDown{from{top:-50px;opacity:0}to{top:0;opacity:1}}
+
+/* Header & Lists */
+.header{padding:12px;background:var(--wh-green);color:#fff;display:flex;justify-content:space-between;align-items:center}
+.my-id-tag{font-size:11px;background:rgba(255,255,255,0.2);padding:4px 8px;border-radius:4px;margin-top:4px;display:inline-block;cursor:pointer}
+.chat-list{flex:1;overflow-y:auto}
+.chat-item{display:flex;align-items:center;padding:12px;border-bottom:1px solid #f0f0f0;cursor:pointer}
+.avatar{width:45px;height:45px;background:#ddd;border-radius:50%;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:20px}
+.avatar img{width:100%;height:100%;object-fit:cover}
+
+/* Chat View */
+.chat-view{position:absolute;inset:0;background:#e5ddd5;display:none;flex-direction:column;z-index:10}
+.chat-header{padding:10px;background:var(--wh-green);color:#fff;display:flex;align-items:center;gap:10px}
+.chat-area{flex:1;padding:15px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;background-size:cover}
+.msg{padding:8px 12px;border-radius:8px;max-width:80%;font-size:14px;box-shadow:0 1px 1px rgba(0,0,0,0.1)}
+.msg.me{background:#dcf8c6;align-self:flex-end}
+.msg.other{background:#fff;align-self:flex-start}
+.msg img{max-width:100%;border-radius:5px;cursor:pointer}
+
+/* Calling UI (Incoming) */
+#incoming-call-overlay{position:fixed;inset:0;background:var(--wh-green);z-index:5000;display:none;flex-direction:column;align-items:center;justify-content:center;color:#fff;text-align:center}
+.call-avatar{width:120px;height:120px;border-radius:50%;background:#fff;margin-bottom:20px;display:flex;align-items:center;justify-content:center;font-size:50px;color:var(--wh-green);border:5px solid var(--accent)}
+.call-btns{display:flex;gap:40px;margin-top:50px}
+.c-btn{width:70px;height:70px;border-radius:50%;border:none;color:#fff;font-size:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 15px rgba(0,0,0,0.3)}
+.btn-accept{background:var(--accent)}
+.btn-reject{background:var(--red)}
+
+/* Video/Active Call UI */
+#video-overlay{position:fixed;inset:0;background:#000;display:none;z-index:100}
+video{width:100%;height:100%;object-fit:cover}
+.hangup-btn{position:absolute;bottom:40px;left:50%;transform:translateX(-50%);background:var(--red);width:65px;height:65px;border-radius:50%;border:none;color:#fff;font-size:28px;cursor:pointer}
+
+/* Input Area */
+.input-area{padding:10px;background:#f0f0f0;display:flex;gap:8px;align-items:center}
+.input-area input{flex:1;padding:10px;border-radius:20px;border:none;outline:none}
+.btn-round{width:40px;height:40px;border-radius:50%;border:none;background:var(--wh-green);color:#fff;cursor:pointer;display:flex;justify-content:center;align-items:center}
+
+/* Overlay for settings/login */
+.full-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.9);display:flex;align-items:center;justify-content:center;z-index:2000}
+.card{background:#fff;padding:25px;border-radius:15px;width:90%;max-width:320px;text-align:center}
+</style>
+</head>
+<body>
+
+<!-- Notification Toast Container -->
+<div id="toast-container"></div>
+
+<div class="app">
+    <!-- Header -->
+    <div class="header">
+        <div style="display:flex; gap:10px; align-items:center">
+            <div class="avatar" id="myDpPreview" style="width:35px;height:35px">👤</div>
+            <div>
+                <b id="displayMyName">Loading...</b><br>
+                <span class="my-id-tag" id="myPeerId">Connecting...</span>
+            </div>
+        </div>
+        <div style="display:flex; gap:8px">
+            <button class="btn-round" onclick="openSettings()" style="background:none;font-size:20px">⚙️</button>
+            <button class="btn-round" onclick="addNewFriend()">+</button>
+        </div>
+    </div>
+
+    <div class="chat-list" id="friendList"></div>
+
+    <!-- Chat View -->
+    <div class="chat-view" id="chatView">
+        <div class="chat-header">
+            <button onclick="closeChat()" style="background:none;border:none;color:#fff;font-size:20px">⬅</button>
+            <div style="flex:1"><b id="chatName">Friend</b><br><small id="connStatus">Connecting...</small></div>
+            <button onclick="startCall(true)" style="background:none;border:none;color:#fff;font-size:22px">📹</button>
+        </div>
+        <div class="chat-area" id="chatMessages"></div>
+        <div class="input-area">
+            <label class="btn-round" style="background:#ddd;color:#333;cursor:pointer">📎<input type="file" accept="image/*" onchange="sendImage(this)" style="display:none"></label>
+            <input type="text" id="messageInput" placeholder="Type a message...">
+            <button class="btn-round" onclick="sendMsg()">➤</button>
+        </div>
+    </div>
+</div>
+
+<!-- Incoming Call UI -->
+<div id="incoming-call-overlay">
+    <div class="call-avatar">👤</div>
+    <h2 id="caller-name">Someone is Calling</h2>
+    <p>Incoming Video Call...</p>
+    <div class="call-btns">
+        <button class="c-btn btn-reject" onclick="rejectCall()">✖</button>
+        <button class="c-btn btn-accept" onclick="acceptCall()">✔</button>
+    </div>
+</div>
+
+<!-- Active Video Call UI -->
+<div id="video-overlay">
+    <video id="remoteVideo" autoplay playsinline></video>
+    <video id="localVideo" autoplay playsinline muted style="position:absolute;top:20px;right:20px;width:100px;height:140px;border:2px solid #fff;border-radius:8px"></video>
+    <button class="hangup-btn" onclick="endCall()">✖</button>
+</div>
+
+<!-- Initialization Overlay -->
+<div class="full-overlay" id="loginOverlay" style="display:none">
+    <div class="card">
+        <h3>Create Profile</h3>
+        <input type="text" id="userName" placeholder="Your Name" style="width:100%;padding:12px;margin:15px 0;border-radius:8px;border:1px solid #ddd">
+        <button class="btn-round" style="width:100%;border-radius:8px;font-weight:bold" onclick="createProfile()">Start App</button>
+    </div>
+</div>
+
+<!-- Ringtone Audio -->
+<audio id="ringtone" loop src="https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3"></audio>
+
+<script>
+let peer, myId, myName, activeConn = null, activeCall = null, incomingCallData = null;
+let friends = JSON.parse(localStorage.getItem('p2p_friends') || '[]');
+let currentChatId = null;
+
+// ১. নটিফিকেশন সিস্টেম (পপআপ এর বদলে)
+function showNotify(msg, type='info') {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.style.display = 'block';
+    toast.style.borderLeft = type === 'error' ? '5px solid var(--red)' : '5px solid var(--accent)';
+    toast.textContent = msg;
+    container.appendChild(toast);
+    setTimeout(() => { toast.style.opacity = '0'; setTimeout(()=>toast.remove(), 500); }, 3500);
+}
+
+// ২. প্রোফাইল ও ইনিশিয়ালাইজেশন
+window.onload = () => {
+    const profile = JSON.parse(localStorage.getItem('my_chat_profile'));
+    if (profile) {
+        myName = profile.name; myId = profile.id;
+        initPeer(myId);
+        document.getElementById('displayMyName').textContent = myName;
+        // Keep screen awake if possible
+        if ('wakeLock' in navigator) navigator.wakeLock.request('screen').catch(()=>{});
+    } else {
+        document.getElementById('loginOverlay').style.display = 'flex';
+    }
+    renderFriends();
+    applySettings();
+};
+
+function initPeer(id) {
+    document.getElementById('myPeerId').textContent = "My ID: " + id;
+    document.getElementById('myPeerId').onclick = () => { navigator.clipboard.writeText(id); showNotify("ID Copied!"); };
+
+    peer = new Peer(id, { config: { 'iceServers': [{ url: 'stun:stun.l.google.com:19302' }, { url: 'stun:stun1.l.google.com:19302' }] }});
+
+    peer.on('connection', conn => {
+        setupConnHandlers(conn);
+        showNotify("New connection from a friend");
+    });
+
+    // ইনকামিং কল হ্যান্ডলিং
+    peer.on('call', call => {
+        incomingCallData = call;
+        const friend = friends.find(f => f.id === call.peer);
+        document.getElementById('caller-name').textContent = friend ? friend.name : call.peer;
+        document.getElementById('incoming-call-overlay').style.display = 'flex';
+        document.getElementById('ringtone').play().catch(()=>{}); // রিংটোন বাজবে
+    });
+
+    peer.on('error', err => showNotify("Connection Error: " + err.type, 'error'));
+}
+
+// ৩. কল ফাংশনস (Accept/Reject)
+function acceptCall() {
+    stopRingtone();
+    navigator.mediaDevices.getUserMedia({video: true, audio: true}).then(stream => {
+        document.getElementById('incoming-call-overlay').style.display = 'none';
+        document.getElementById('video-overlay').style.display = 'block';
+        document.getElementById('localVideo').srcObject = stream;
+        incomingCallData.answer(stream);
+        incomingCallData.on('stream', remStream => {
+            document.getElementById('remoteVideo').srcObject = remStream;
+        });
+        activeCall = incomingCallData;
+    }).catch(() => showNotify("Camera/Mic permission needed", 'error'));
+}
+
+function rejectCall() {
+    stopRingtone();
+    if(incomingCallData) incomingCallData.close();
+    document.getElementById('incoming-call-overlay').style.display = 'none';
+    showNotify("Call Rejected");
+}
+
+function stopRingtone() {
+    const r = document.getElementById('ringtone');
+    r.pause(); r.currentTime = 0;
+}
+
+function startCall(isVideo) {
+    if(!currentChatId) return;
+    showNotify("Calling friend...");
+    navigator.mediaDevices.getUserMedia({video: isVideo, audio: true}).then(stream => {
+        document.getElementById('video-overlay').style.display = 'block';
+        document.getElementById('localVideo').srcObject = stream;
+        const call = peer.call(currentChatId, stream);
+        call.on('stream', remStream => {
+            document.getElementById('remoteVideo').srcObject = remStream;
+        });
+        activeCall = call;
+    }).catch(() => showNotify("Could not access Camera", 'error'));
+}
+
+function endCall() {
+    if(activeCall) activeCall.close();
+    location.reload(); // ক্লিন রিসেট
+}
+
+// ৪. চ্যাট ও ইমেজ (Max 10MB)
+function sendImage(input) {
+    const file = input.files[0];
+    if(!file) return;
+    if(file.size > 10 * 1024 * 1024) return showNotify("File too large (Max 10MB)", 'error');
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const data = e.target.result;
+        if(activeConn && activeConn.open) {
+            activeConn.send({type:'img', data: data});
+            saveAndAppend(data, 'me', 'img');
+        } else {
+            showNotify("Friend is offline", 'error');
+        }
+    };
+    reader.readAsDataURL(file);
+}
+
+function sendMsg() {
+    const input = document.getElementById('messageInput');
+    const msg = input.value.trim();
+    if(msg && activeConn && activeConn.open) {
+        activeConn.send({type:'text', data: msg});
+        saveAndAppend(msg, 'me', 'text');
+        input.value = '';
+    }
+}
+
+function saveAndAppend(content, side, type) {
+    appendMsg(content, side, type);
+    let h = JSON.parse(localStorage.getItem('chat_history_'+currentChatId) || '[]');
+    h.push({side, content, type});
+    localStorage.setItem('chat_history_'+currentChatId, JSON.stringify(h));
+}
+
+function setupConnHandlers(conn) {
+    activeConn = conn;
+    conn.on('data', data => {
+        const type = data.type || 'text';
+        const content = data.data;
+        if(currentChatId === conn.peer) {
+            appendMsg(content, 'other', type);
+        } else {
+            showNotify("New message from a friend");
+        }
+        // Save to background history
+        let h = JSON.parse(localStorage.getItem('chat_history_'+conn.peer) || '[]');
+        h.push({side:'other', content, type});
+        localStorage.setItem('chat_history_'+conn.peer, JSON.stringify(h));
+    });
+    conn.on('open', () => { if(currentChatId === conn.peer) document.getElementById('connStatus').textContent = "Online"; });
+}
+
+function appendMsg(content, side, type) {
+    const area = document.getElementById('chatMessages');
+    const div = document.createElement('div');
+    div.className = `msg ${side}`;
+    if(type === 'img') div.innerHTML = `<img src="${content}" onclick="window.open(this.src)">`;
+    else div.textContent = content;
+    area.appendChild(div);
+    area.scrollTop = area.scrollHeight;
+}
+
+// ৫. অন্যান্য সেটিংস
+function createProfile() {
+    const n = document.getElementById('userName').value.trim();
+    if(!n) return;
+    const id = 'UID-' + Math.floor(Math.random() * 899999 + 100000);
+    localStorage.setItem('my_chat_profile', JSON.stringify({name:n, id}));
+    location.reload();
+}
+
+function openChat(f) {
+    currentChatId = f.id;
+    document.getElementById('chatView').style.display = 'flex';
+    document.getElementById('chatName').textContent = f.name;
+    document.getElementById('chatMessages').innerHTML = '';
+    const h = JSON.parse(localStorage.getItem('chat_history_'+f.id) || '[]');
+    h.forEach(m => appendMsg(m.content, m.side, m.type));
+    activeConn = peer.connect(f.id);
+    setupConnHandlers(activeConn);
+}
+
+function renderFriends() {
+    const list = document.getElementById('friendList'); list.innerHTML = '';
+    friends.forEach(f => {
+        const d = document.createElement('div'); d.className = 'chat-item';
+        d.onclick = () => openChat(f);
+        d.innerHTML = `<div class="avatar">👤</div><div><b>${f.name}</b><br><small>${f.id}</small></div>`;
+        list.appendChild(d);
+    });
+}
+
+function addNewFriend() {
+    const id = prompt("Friend ID:"); if(!id) return;
+    const name = prompt("Name:");
+    friends.push({id, name: name || id});
+    localStorage.setItem('p2p_friends', JSON.stringify(friends));
+    renderFriends();
+}
+
+function applySettings() {
+    const dp = localStorage.getItem('my_dp');
+    if(dp) document.getElementById('myDpPreview').innerHTML = `<img src="${dp}">`;
+}
+
+function closeChat() { document.getElementById('chatView').style.display='none'; currentChatId=null; }
+function openSettings() { showNotify("Settings Panel coming soon (Name/DP change enabled in code)"); }
+</script>
+</body>
+</html>
